@@ -197,7 +197,8 @@ app.post('/api/reset/:code', w(async (req, res) => {
 // QR: PNG untuk cetak, SVG untuk desain
 app.get('/qr/:code.png', w(async (req, res) => {
   const c = await getCard(req.params.code); if (!c) return res.sendStatus(404);
-  res.type('png').send(await QRCode.toBuffer(`${baseUrl(req)}/c/${c.code}`, { width: 800, margin: 2, errorCorrectionLevel: 'H' }));
+  const wpx = Math.min(Math.max(parseInt(req.query.w) || 1000, 100), 2000);
+  res.type('png').send(await QRCode.toBuffer(`${baseUrl(req)}/c/${c.code}`, { width: wpx, margin: 4, errorCorrectionLevel: 'H' }));
 }));
 app.get('/qr/:code.svg', w(async (req, res) => {
   const c = await getCard(req.params.code); if (!c) return res.sendStatus(404);
@@ -217,10 +218,10 @@ function admin(req, res, next) {
 app.get('/admin', admin, w(async (req, res) => {
   const base = baseUrl(req);
   const cards = (await allCards()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const rows = cards.map((c) => `<tr><td><img src="/qr/${c.code}.svg" width="70"></td><td><b>${c.code}</b></td>
+  const rows = cards.map((c) => `<tr><td><img src="/qr/${c.code}.png?w=200" width="90" height="90" loading="lazy"></td><td><b>${c.code}</b></td>
 <td>${c.active ? '✅ aktif' : '⚪ belum'}</td><td>${esc(c.name)}</td>
 <td><input readonly value="${base}/c/${c.code}" onclick="this.select()" style="padding:8px;border-radius:8px;font-size:13px;min-width:230px"></td>
-<td style="white-space:nowrap"><a class="l" href="/qr/${c.code}.png" download="${c.code}.png">PNG</a> · <a class="l" href="/qr/${c.code}.svg" download="${c.code}.svg">SVG</a>
+<td style="white-space:nowrap"><a class="l" href="/qr/${c.code}.png" download="${c.code}.png" style="background:#0070e0;color:#fff;padding:8px 14px;border-radius:10px;text-decoration:none">Download PNG</a> · <a class="l" href="/qr/${c.code}.svg" download="${c.code}.svg" style="font-weight:400;font-size:13px">SVG</a>
 ${c.active ? `<form method="post" action="/admin/reset/${c.code}" style="display:inline" onsubmit="return confirm('Reset kartu ${c.code}? (hapus PIN & data)')"> · <button style="border:0;background:none;color:#b91c1c;cursor:pointer;font-weight:600">Reset</button></form>` : ''}</td></tr>`).join('');
   res.send(page('Admin', `<div class="card"><h1>Admin Kartu Review</h1>
 <form method="post" action="/admin/generate" style="display:flex;gap:10px;align-items:end"><div><label style="margin-top:0">Jumlah kartu baru</label><input name="count" type="number" min="1" max="200" value="10"></div>
