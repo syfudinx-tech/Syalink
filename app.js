@@ -66,6 +66,45 @@ function buildReviewUrl(name, input) {
   return 'https://www.google.com/search?q=' + encodeURIComponent(name + ' ulasan');
 }
 
+// Link "Bagikan" dari Google Maps -> Place ID (gratis, tanpa API key).
+// Link Maps memuat kode bisnis berbentuk 0x...:0x...; Place ID "ChIJ..." adalah penyandian dari dua angka itu.
+const FTID_RE = /(0x[0-9a-f]{1,16}):(0x[0-9a-f]{1,16})/i;
+function ftidToPlaceId(a, b) {
+  const buf = Buffer.alloc(20);
+  buf[0] = 0x0a; buf[1] = 0x12; buf[2] = 0x09;
+  buf.writeBigUInt64LE(BigInt(a), 3);
+  buf[11] = 0x11;
+  buf.writeBigUInt64LE(BigInt(b), 12);
+  return buf.toString('base64url');
+}
+async function mapsLinkToPlaceId(input) {
+  let m = decodeURIComponent(input).match(FTID_RE);
+  if (!m) {
+    const r = await fetch(input, {
+      redirect: 'follow',
+      headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36', 'Accept-Language': 'id' },
+      signal: AbortSignal.timeout(7000),
+    });
+    try { r.body && r.body.cancel(); } catch (e) {}
+    m = decodeURIComponent(r.url).match(FTID_RE);
+  }
+  return m ? ftidToPlaceId(m[1], m[2]) : null;
+}
+// Hasil: { url, input }. input = yang disimpan (Place ID kalau berhasil dikonversi).
+async function resolveReview(name, raw) {
+  const input = (raw || '').trim();
+  try {
+    const u = new URL(input);
+    const h = u.hostname.toLowerCase();
+    const isMaps = u.protocol === 'https:' && (h === 'maps.app.goo.gl' || (h === 'goo.gl' && u.pathname.startsWith('/maps')) || ((h === 'www.google.com' || h === 'google.com') && u.pathname.startsWith('/maps')));
+    if (isMaps) {
+      const id = await mapsLinkToPlaceId(input);
+      if (id) return { url: 'https://search.google.com/local/writereview?placeid=' + id, input: id };
+    }
+  } catch (e) { /* lanjut ke cara biasa */ }
+  return { url: buildReviewUrl(name, input), input };
+}
+
 // ---------- tampilan ----------
 const CSS = `*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
 font-family:Inter,system-ui,sans-serif;background:linear-gradient(#eaf0f9,#fafafa);color:#1f2328}
@@ -95,9 +134,9 @@ const activationPage = (c) => page('Aktivasi Kartu', `<div class="card"><h1>Akti
 <p>Kode kartu: <b>${esc(c.code)}</b><br>Isi semua kolom di bawah untuk mengaktifkan kartu.</p>
 <form data-action="/api/activate/${c.code}" data-next="/done/${c.code}">
 <label>Nama Bisnis</label><input name="name" placeholder="Nama bisnis + kota" required maxlength="120">
-<label>Link Review Google <span style="font-weight:400">(opsional, tapi disarankan)</span></label>
-<input name="review" placeholder="https://g.page/r/.../review atau Place ID" maxlength="500">
-<p class="hint">Kosong = pelanggan dibawa ke hasil pencarian Google bisnis Anda.</p>
+<label>Link Google Maps Bisnis <span style="font-weight:400">(disarankan)</span></label>
+<input name="review" placeholder="Tempel link dari Google Maps" maxlength="500">
+<p class="hint">Cara: buka bisnis Anda di Google Maps → Bagikan → Salin link → tempel di sini. Boleh juga link g.page/r/.../review atau Place ID. Kosong = pelanggan dibawa ke pencarian Google.</p>
 <label>Buat PIN (4 Digit Angka)</label>${pinInput('pin')}
 <button class="btn" type="submit">Aktifkan Kartu</button><div class="msg"></div></form></div>${FORM_JS}`);
 
@@ -113,7 +152,7 @@ const editPage = (c) => page('Edit Kartu', `<div class="card"><h1>Edit Kartu</h1
 <form data-action="/api/edit/${c.code}" data-next="/done/${c.code}"><label>PIN Saat Ini</label>${pinInput('pin')}
 <a class="l" style="font-size:15px;display:inline-block;margin-top:8px" href="${ADMIN_WA ? 'https://wa.me/' + ADMIN_WA + '?text=' + encodeURIComponent('Lupa PIN kartu ' + c.code) : '#'}">Lupa PIN? Hubungi Admin</a>
 <label>Nama Bisnis</label><input name="name" placeholder="Nama bisnis + kota" maxlength="120">
-<label>Link Review Google</label><input name="review" placeholder="Kosongkan jika tidak ganti" maxlength="500">
+<label>Link Google Maps / Review</label><input name="review" placeholder="Tempel link Maps (Bagikan); kosongkan jika tidak ganti" maxlength="500">
 <label>PIN Baru (opsional, kosongkan jika tidak ganti)</label>${pinInput('newPin', false)}
 <button class="btn" type="submit">Simpan Perubahan</button><div class="msg"></div></form><hr>
 <p style="color:#374151">Mau jual ulang kartu ini ke bisnis lain? Reset kartu akan menghapus nama bisnis, link review, dan PIN saat ini, lalu kartu bisa diaktivasi ulang dari awal.</p>
@@ -149,9 +188,9 @@ app.post('/api/activate/:code', w(async (req, res) => {
   const { name, review, pin } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Nama bisnis wajib diisi' });
   if (!validPin(pin)) return res.status(400).json({ error: 'PIN harus 4 digit angka' });
-  const url = buildReviewUrl(name.trim(), review);
-  if (!url) return res.status(400).json({ error: 'Link harus berasal dari Google (g.page, google.com, maps.app.goo.gl)' });
-  Object.assign(c, { active: true, name: name.trim(), reviewInput: (review || '').trim(), reviewUrl: url, pinHash: hashPin(pin), activatedAt: new Date().toISOString() });
+  const rv = await resolveReview(name.trim(), review);
+  if (!rv.url) return res.status(400).json({ error: 'Link harus berasal dari Google (g.page, google.com, maps.app.goo.gl)' });
+  Object.assign(c, { active: true, name: name.trim(), reviewInput: rv.input, reviewUrl: rv.url, pinHash: hashPin(pin), activatedAt: new Date().toISOString() });
   await putCard(c);
   res.json({ ok: true });
 }));
@@ -175,11 +214,10 @@ app.post('/api/edit/:code', w(async (req, res) => {
   if (!(await authPin(req, res, c))) return;
   const { name, review, newPin } = req.body;
   const nm = (name || '').trim() || c.name;
-  const input = (review || '').trim() || c.reviewInput;
-  const url = buildReviewUrl(nm, input);
-  if (!url) return res.status(400).json({ error: 'Link harus berasal dari Google' });
+  const rv = await resolveReview(nm, (review || '').trim() || c.reviewInput);
+  if (!rv.url) return res.status(400).json({ error: 'Link harus berasal dari Google' });
   if (newPin && !validPin(newPin)) return res.status(400).json({ error: 'PIN baru harus 4 digit angka' });
-  Object.assign(c, { name: nm, reviewInput: input, reviewUrl: url });
+  Object.assign(c, { name: nm, reviewInput: rv.input, reviewUrl: rv.url });
   if (newPin) c.pinHash = hashPin(newPin);
   await putCard(c);
   res.json({ ok: true, message: 'Perubahan tersimpan' });
