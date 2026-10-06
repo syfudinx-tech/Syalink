@@ -110,7 +110,7 @@ const donePage = (c) => page('Kartu Aktif', `<div class="card"><h1>Kartu Sudah A
 
 const editPage = (c) => page('Edit Kartu', `<div class="card"><h1>Edit Kartu</h1>
 <p>Kode kartu: <b>${esc(c.code)}</b><br>Masukkan PIN saat ini untuk mengubah link Google Review atau PIN.</p>
-<form data-action="/api/edit/${c.code}"><label>PIN Saat Ini</label>${pinInput('pin')}
+<form data-action="/api/edit/${c.code}" data-next="/done/${c.code}"><label>PIN Saat Ini</label>${pinInput('pin')}
 <a class="l" style="font-size:15px;display:inline-block;margin-top:8px" href="${ADMIN_WA ? 'https://wa.me/' + ADMIN_WA + '?text=' + encodeURIComponent('Lupa PIN kartu ' + c.code) : '#'}">Lupa PIN? Hubungi Admin</a>
 <label>Nama Bisnis</label><input name="name" placeholder="Nama bisnis + kota" maxlength="120">
 <label>Link Review Google</label><input name="review" placeholder="Kosongkan jika tidak ganti" maxlength="500">
